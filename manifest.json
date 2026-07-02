@@ -1,0 +1,97 @@
+{
+  "manifest_version": "0.3",
+  "name": "not-a-budget",
+  "display_name": "NAB",
+  "version": "0.6.0",
+  "description": "NAB (Not A Budget): quarterly cash-flow tracking against a flat spend curve, external-fund credits, and CSV import/normalization over a SQLite database.",
+  "long_description": "Tracks spending against a flat linear quarterly curve (default $15,000/quarter) rather than a traditional category budget. Supports an external-fund credit system where large one-off purchases funded from savings are subtracted from net spend, a guided import flow that normalizes and de-duplicates arbitrary transaction CSVs, and canonical 'spend vs budget' and quarter-comparison views whose results carry explicit render instructions.",
+  "author": {
+    "name": "Brandon Mayfield"
+  },
+  "license": "MIT",
+  "server": {
+    "type": "binary",
+    "entry_point": "server/not-a-budget",
+    "mcp_config": {
+      "command": "${__dirname}/server/not-a-budget",
+      "args": [],
+      "platform_overrides": {
+        "win32": {
+          "command": "${__dirname}/server/not-a-budget.exe"
+        }
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "set_config",
+      "description": "Update a budget's quarterly_goal, curve_days, or budget_name."
+    },
+    {
+      "name": "import_file",
+      "description": "Bulk-import a normalized CSV/JSON file by path; preferred for many rows. Dedups and filters payments/transfers."
+    },
+    {
+      "name": "import_transactions",
+      "description": "Import pre-normalized transaction rows (array or rows_json string); dedups and filters out payments/transfers."
+    },
+    {
+      "name": "add_transaction",
+      "description": "Add a single transaction."
+    },
+    {
+      "name": "add_credit",
+      "description": "Add an external-fund credit that offsets net spend on its date."
+    },
+    {
+      "name": "mark_credit_transferred",
+      "description": "Mark an external-fund credit as transferred (or not)."
+    },
+    {
+      "name": "get_budget_info",
+      "description": "Read-only: return a budget's path and configuration."
+    },
+    {
+      "name": "list_budgets",
+      "description": "Read-only: list budget files found in the configured budgets folder."
+    },
+    {
+      "name": "list_transactions",
+      "description": "Read-only: list transactions, optionally filtered by quarter or date range."
+    },
+    {
+      "name": "list_credits",
+      "description": "Read-only: list external-fund credits, optionally filtered by quarter."
+    },
+    {
+      "name": "quarter_status",
+      "description": "Read-only: cumulative net spend vs the flat budget curve for a quarter (the headline view)."
+    },
+    {
+      "name": "year_summary",
+      "description": "Read-only: quarter-over-quarter net spend vs goal comparison."
+    },
+    {
+      "name": "category_breakdown",
+      "description": "Read-only: per-category spend for a quarter (analysis only)."
+    },
+    {
+      "name": "get_cli_info",
+      "description": "Read-only: return the binary path and CLI usage for script-based bulk import/query."
+    }
+  ],
+  "keywords": [
+    "budget",
+    "finance",
+    "sqlite",
+    "quarterly",
+    "cash-flow"
+  ],
+  "compatibility": {
+    "platforms": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
+  }
+}

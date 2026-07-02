@@ -1,0 +1,6 @@
+let's plan out this new project, we are creating a mcp bundle that will manage a
+  budget for us.   This isn't a traditional budget app, it focuses on quarterly cash
+  flow, we track transactions, but then for review we often focus on how much has been
+  spent for the quarter, tracking charts based on a flat spending curve for the
+  entire quarter, the user will ask, "how much have I spent this quarter compared to
+  budget", another common task will be to import and normalize transaction csv's , another major mechanic is to support an external fund system,  where there is a standard quarterly general budget, but then sometimes the user will account for a large purchase (maybe major car work) with a automotive credit to the general fund, this would then be transferred from an external savings account to the general account by the user. The main mcp bundle will instruct the agent on how to manage the sqlite transaction database as well as provide information on what kind of standard charts the user will want to view, instead of hoping that the agent displays the information consistently. an example spreadsheet is in the directory, that not only has a transaction record, but all of the example charts and tables the user wants to view,  as well as the credit table, analyze the spreadsheet thourougly to understand what the user needs,

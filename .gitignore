@@ -1,0 +1,12 @@
+# build artifacts
+/server/not-a-budget
+/server/not-a-budget.exe
+/dist/
+
+# local budget databases
+*.db
+*.sqlite
+*.sqlite3
+*.obs
+*.csv
+*.xlxs

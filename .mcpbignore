@@ -1,0 +1,18 @@
+# Exclude source and dev files from the packed bundle. Only the compiled binary
+# (server/), manifest.json, docs/, README, and LICENSE need to ship.
+.git/
+.gitignore
+cmd/
+internal/
+scripts/
+dist/
+testdata/
+justfile
+go.mod
+go.sum
+*.go
+*.ods
+initial_prompt.md
+*.db
+*.sqlite
+*.sqlite3
