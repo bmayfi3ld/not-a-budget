@@ -4,7 +4,10 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
+
+	"github.com/bmayfield/mcpb-budget/internal/store"
 )
 
 func TestReadCSVHeaderMapping(t *testing.T) {
@@ -62,3 +65,52 @@ func TestReadJSONArrayAndWrapper(t *testing.T) {
 		t.Fatalf("wrapper: rows=%d src=%q err=%v", len(rows), src, err)
 	}
 }
+
+func TestUpdateAndDeleteSubcommands(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "b.db")
+	csv := filepath.Join(dir, "in.csv")
+	os.WriteFile(csv, []byte("txn_date,description,amount,category\n2026-04-01,KROGER,-50,Groceries\n"), 0o644)
+	if code := Run([]string{"import", "--budget", db, "--csv", csv, "--create"}); code != 0 {
+		t.Fatalf("import exit %d", code)
+	}
+
+	s, err := store.Open(db, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	txns, _ := s.TransactionsBetween("2026-01-01", "2026-12-31")
+	if len(txns) != 1 {
+		t.Fatalf("txns=%d", len(txns))
+	}
+	id := txns[0].ID
+	s.Close()
+
+	// Partial update: only amount; category must be preserved.
+	if code := Run([]string{"update-transaction", "--budget", db, "--id",
+		itoa(id), "--amount", "-75.5"}); code != 0 {
+		t.Fatalf("update-transaction exit %d", code)
+	}
+	s, _ = store.Open(db, false)
+	got, _ := s.GetTransaction(id)
+	if got.Amount != -75.5 || got.Category != "Groceries" {
+		t.Fatalf("partial update wrong: %+v", got)
+	}
+	s.Close()
+
+	if code := Run([]string{"delete-transaction", "--budget", db, "--id", itoa(id)}); code != 0 {
+		t.Fatalf("delete-transaction exit %d", code)
+	}
+	s, _ = store.Open(db, false)
+	if _, err := s.GetTransaction(id); err == nil {
+		t.Fatal("expected txn gone")
+	}
+	s.Close()
+
+	// Missing --id is an error.
+	if code := Run([]string{"delete-transaction", "--budget", db}); code == 0 {
+		t.Fatal("expected non-zero exit for missing --id")
+	}
+}
+
+func itoa(n int64) string { return strconv.FormatInt(n, 10) }

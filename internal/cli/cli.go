@@ -37,6 +37,10 @@ Commands:
   year-summary        Print the quarter-over-quarter comparison
   category-breakdown  Print per-category spend for a quarter
   add-credit          Add an external-fund credit
+  update-transaction  Edit one existing transaction by id
+  delete-transaction  Delete one transaction by id
+  update-credit       Edit one existing credit by id
+  delete-credit       Delete one credit by id
   version             Print the version
   help                Show this help
 
@@ -69,6 +73,14 @@ func Run(args []string) int {
 		return cmdCategoryBreakdown(rest)
 	case "add-credit":
 		return cmdAddCredit(rest)
+	case "update-transaction":
+		return cmdUpdateTransaction(rest)
+	case "delete-transaction":
+		return cmdDeleteTransaction(rest)
+	case "update-credit":
+		return cmdUpdateCredit(rest)
+	case "delete-credit":
+		return cmdDeleteCredit(rest)
 	case "version", "--version", "-v":
 		fmt.Fprintln(os.Stdout, Version)
 		return 0
@@ -246,6 +258,181 @@ func cmdAddCredit(args []string) int {
 		return fail("add credit: %v", err)
 	}
 	return emit(map[string]any{"id": id})
+}
+
+func cmdUpdateTransaction(args []string) int {
+	fs := flag.NewFlagSet("update-transaction", flag.ContinueOnError)
+	budgetPath := fs.String("budget", "", "path to the budget SQLite file")
+	id := fs.Int64("id", 0, "id of the transaction to update (from list/quarter output)")
+	txnDate := fs.String("txn-date", "", "ISO YYYY-MM-DD")
+	postDate := fs.String("post-date", "", "ISO YYYY-MM-DD")
+	description := fs.String("description", "", "merchant/description text")
+	amount := fs.Float64("amount", 0, "signed amount; negative = spend")
+	category := fs.String("category", "", "category (normalized to the canonical set)")
+	txnType := fs.String("txn-type", "", "expense|refund|payment|transfer|other")
+	memo := fs.String("memo", "", "optional note")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *id == 0 {
+		return fail("--id is required")
+	}
+	set := setFlags(fs)
+	if set["txn-date"] {
+		if _, err := time.Parse("2006-01-02", *txnDate); err != nil {
+			return fail("bad --txn-date %q (need YYYY-MM-DD)", *txnDate)
+		}
+	}
+	if set["description"] && strings.TrimSpace(*description) == "" {
+		return fail("--description cannot be empty")
+	}
+
+	s, code := openBudget(*budgetPath, false)
+	if code != 0 {
+		return code
+	}
+	defer s.Close()
+	t, err := s.GetTransaction(*id)
+	if err != nil {
+		return fail("%v", err)
+	}
+	// Apply only the flags the caller set, mirroring the update_transaction tool.
+	if set["txn-date"] {
+		t.TxnDate = *txnDate
+	}
+	if set["post-date"] {
+		t.PostDate = *postDate
+	}
+	if set["description"] {
+		t.Description = *description
+	}
+	if set["amount"] {
+		t.Amount = *amount
+	}
+	if set["category"] {
+		t.Category = importer.NormalizeCategory(*category)
+		t.RawCategory = strings.TrimSpace(*category)
+	}
+	if set["txn-type"] {
+		t.TxnType = importer.ClassifyType(*txnType, t.Description, t.Amount)
+	}
+	if set["memo"] {
+		t.Memo = *memo
+	}
+	if err := s.UpdateTransaction(t); err != nil {
+		return fail("update transaction: %v", err)
+	}
+	updated, err := s.GetTransaction(*id)
+	if err != nil {
+		return fail("%v", err)
+	}
+	return emit(updated)
+}
+
+func cmdDeleteTransaction(args []string) int {
+	fs := flag.NewFlagSet("delete-transaction", flag.ContinueOnError)
+	budgetPath := fs.String("budget", "", "path to the budget SQLite file")
+	id := fs.Int64("id", 0, "id of the transaction to delete")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *id == 0 {
+		return fail("--id is required")
+	}
+	s, code := openBudget(*budgetPath, false)
+	if code != 0 {
+		return code
+	}
+	defer s.Close()
+	if err := s.DeleteTransaction(*id); err != nil {
+		return fail("delete transaction: %v", err)
+	}
+	return emit(map[string]any{"ok": true, "deleted_id": *id})
+}
+
+func cmdUpdateCredit(args []string) int {
+	fs := flag.NewFlagSet("update-credit", flag.ContinueOnError)
+	budgetPath := fs.String("budget", "", "path to the budget SQLite file")
+	id := fs.Int64("id", 0, "id of the credit to update (from list_credits output)")
+	date := fs.String("date", "", "ISO YYYY-MM-DD")
+	amount := fs.Float64("amount", 0, "credit amount (positive)")
+	note := fs.String("note", "", "optional note")
+	note2 := fs.String("note2", "", "optional second note")
+	transferred := fs.Bool("transferred", false, "whether the transfer has happened")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *id == 0 {
+		return fail("--id is required")
+	}
+	set := setFlags(fs)
+	if set["date"] {
+		if _, err := time.Parse("2006-01-02", *date); err != nil {
+			return fail("bad --date %q (need YYYY-MM-DD)", *date)
+		}
+	}
+	s, code := openBudget(*budgetPath, false)
+	if code != 0 {
+		return code
+	}
+	defer s.Close()
+	c, err := s.GetCredit(*id)
+	if err != nil {
+		return fail("%v", err)
+	}
+	if set["date"] {
+		c.Date = *date
+	}
+	if set["amount"] {
+		c.Amount = *amount
+	}
+	if set["note"] {
+		c.Note = *note
+	}
+	if set["note2"] {
+		c.Note2 = *note2
+	}
+	if set["transferred"] {
+		c.Transferred = *transferred
+	}
+	if err := s.UpdateCredit(c); err != nil {
+		return fail("update credit: %v", err)
+	}
+	updated, err := s.GetCredit(*id)
+	if err != nil {
+		return fail("%v", err)
+	}
+	return emit(updated)
+}
+
+func cmdDeleteCredit(args []string) int {
+	fs := flag.NewFlagSet("delete-credit", flag.ContinueOnError)
+	budgetPath := fs.String("budget", "", "path to the budget SQLite file")
+	id := fs.Int64("id", 0, "id of the credit to delete")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *id == 0 {
+		return fail("--id is required")
+	}
+	s, code := openBudget(*budgetPath, false)
+	if code != 0 {
+		return code
+	}
+	defer s.Close()
+	if err := s.DeleteCredit(*id); err != nil {
+		return fail("delete credit: %v", err)
+	}
+	return emit(map[string]any{"ok": true, "deleted_id": *id})
+}
+
+// setFlags reports which flags were explicitly provided on the command line, so
+// update commands can distinguish "set to zero value" from "not provided" and
+// apply true partial updates.
+func setFlags(fs *flag.FlagSet) map[string]bool {
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	return set
 }
 
 // ---- input readers ----

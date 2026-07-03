@@ -247,6 +247,105 @@ func (s *Store) InsertCredit(c Credit) (int64, error) {
 	return res.LastInsertId()
 }
 
+// GetTransaction returns a single transaction by id.
+func (s *Store) GetTransaction(id int64) (Transaction, error) {
+	row := s.db.QueryRow(
+		`SELECT id, txn_date, COALESCE(post_date,''), description, amount, category,
+		        COALESCE(raw_category,''), txn_type, COALESCE(memo,''), COALESCE(source,'')
+		 FROM transactions WHERE id=?`, id)
+	var t Transaction
+	if err := row.Scan(&t.ID, &t.TxnDate, &t.PostDate, &t.Description, &t.Amount,
+		&t.Category, &t.RawCategory, &t.TxnType, &t.Memo, &t.Source); err != nil {
+		if err == sql.ErrNoRows {
+			return Transaction{}, fmt.Errorf("no transaction with id %d", id)
+		}
+		return Transaction{}, err
+	}
+	return t, nil
+}
+
+// UpdateTransaction updates every column of the transaction identified by t.ID
+// and recomputes its dedup hash from the (possibly changed) date/amount/
+// description. It returns an error if no row has that id, or if the new values
+// would collide with another transaction's dedup hash.
+func (s *Store) UpdateTransaction(t Transaction) error {
+	hash := DedupHash(t.TxnDate, t.Amount, t.Description)
+	res, err := s.db.Exec(
+		`UPDATE transactions SET
+		   txn_date=?, post_date=?, description=?, amount=?, category=?,
+		   raw_category=?, txn_type=?, memo=?, source=?, dedup_hash=?
+		 WHERE id=?`,
+		t.TxnDate, nullStr(t.PostDate), t.Description, t.Amount, t.Category,
+		nullStr(t.RawCategory), t.TxnType, nullStr(t.Memo), nullStr(t.Source), hash, t.ID,
+	)
+	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE") {
+			return fmt.Errorf("update would duplicate an existing transaction (same date, amount, and description)")
+		}
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("no transaction with id %d", t.ID)
+	}
+	return nil
+}
+
+// DeleteTransaction removes the transaction with the given id.
+func (s *Store) DeleteTransaction(id int64) error {
+	res, err := s.db.Exec(`DELETE FROM transactions WHERE id=?`, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("no transaction with id %d", id)
+	}
+	return nil
+}
+
+// GetCredit returns a single credit by id.
+func (s *Store) GetCredit(id int64) (Credit, error) {
+	row := s.db.QueryRow(
+		`SELECT id, date, amount, COALESCE(note,''), COALESCE(note2,''), transferred, COALESCE(source,'')
+		 FROM credits WHERE id=?`, id)
+	var c Credit
+	var transferred int
+	if err := row.Scan(&c.ID, &c.Date, &c.Amount, &c.Note, &c.Note2, &transferred, &c.Source); err != nil {
+		if err == sql.ErrNoRows {
+			return Credit{}, fmt.Errorf("no credit with id %d", id)
+		}
+		return Credit{}, err
+	}
+	c.Transferred = transferred != 0
+	return c, nil
+}
+
+// UpdateCredit updates every column of the credit identified by c.ID.
+func (s *Store) UpdateCredit(c Credit) error {
+	res, err := s.db.Exec(
+		`UPDATE credits SET date=?, amount=?, note=?, note2=?, transferred=?, source=? WHERE id=?`,
+		c.Date, c.Amount, nullStr(c.Note), nullStr(c.Note2), boolInt(c.Transferred), nullStr(c.Source), c.ID,
+	)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("no credit with id %d", c.ID)
+	}
+	return nil
+}
+
+// DeleteCredit removes the credit with the given id.
+func (s *Store) DeleteCredit(id int64) error {
+	res, err := s.db.Exec(`DELETE FROM credits WHERE id=?`, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("no credit with id %d", id)
+	}
+	return nil
+}
+
 // MarkCreditTransferred sets the transferred flag on a credit.
 func (s *Store) MarkCreditTransferred(id int64, transferred bool) error {
 	res, err := s.db.Exec(`UPDATE credits SET transferred=? WHERE id=?`, boolInt(transferred), id)

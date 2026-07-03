@@ -9,7 +9,19 @@ This file is the single source of truth for the version number: the most recent
 released `## [x.y.z]` heading below drives the version injected into the binary
 and `manifest.json` at build time (`just build`).
 
-## [Unreleased]
+## [0.7.0] - 2026-07-02
+
+### Added
+- Record-editing tools: `update_transaction` and `update_credit` edit a single
+  existing record by id (partial updates — only the fields you pass change).
+  Updating a transaction re-normalizes its category/type and recomputes the
+  dedup key, rejecting edits that would collide with another transaction.
+- Record-deletion tools: `delete_transaction` and `delete_credit` remove a
+  single record by id. They carry `destructiveHint: true` so clients surface
+  them for confirmation. These are single-record only (no bulk delete).
+- CLI parity for the above: `update-transaction`, `delete-transaction`,
+  `update-credit`, and `delete-credit` subcommands. The `update-*` commands are
+  partial — only flags explicitly passed are applied.
 
 ## [0.6.0] - 2026-07-01
 

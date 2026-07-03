@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "not-a-budget",
   "display_name": "NAB",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "NAB (Not A Budget): quarterly cash-flow tracking against a flat spend curve, external-fund credits, and CSV import/normalization over a SQLite database.",
   "long_description": "Tracks spending against a flat linear quarterly curve (default $15,000/quarter) rather than a traditional category budget. Supports an external-fund credit system where large one-off purchases funded from savings are subtracted from net spend, a guided import flow that normalizes and de-duplicates arbitrary transaction CSVs, and canonical 'spend vs budget' and quarter-comparison views whose results carry explicit render instructions.",
   "author": {
@@ -46,6 +46,22 @@
     {
       "name": "mark_credit_transferred",
       "description": "Mark an external-fund credit as transferred (or not)."
+    },
+    {
+      "name": "update_transaction",
+      "description": "Edit one existing transaction by id (partial update); re-normalizes category/type and recomputes the dedup key."
+    },
+    {
+      "name": "delete_transaction",
+      "description": "Permanently delete one transaction by id."
+    },
+    {
+      "name": "update_credit",
+      "description": "Edit one existing external-fund credit by id (partial update)."
+    },
+    {
+      "name": "delete_credit",
+      "description": "Permanently delete one external-fund credit by id."
     },
     {
       "name": "get_budget_info",

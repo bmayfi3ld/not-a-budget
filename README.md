@@ -37,7 +37,8 @@ Tools split into two categories:
 | Category | Tools | Notes |
 |----------|-------|-------|
 | **Read** (`readOnlyHint`) | `quarter_status`, `year_summary`, `category_breakdown`, `list_transactions`, `list_credits`, `get_budget_info`, `list_budgets`, `get_cli_info` | Open the budget **read-only** (no disk side effects). Work in stateless, read-only sessions such as live artifacts. |
-| **Write** | `set_config`, `import_file`, `import_transactions`, `add_transaction`, `add_credit`, `mark_credit_transferred` | Create/modify a budget; **create the file if it does not exist**. |
+| **Write** | `set_config`, `import_file`, `import_transactions`, `add_transaction`, `add_credit`, `mark_credit_transferred`, `update_transaction`, `update_credit` | Create/modify a budget; **create the file if it does not exist**. |
+| **Delete** (`destructiveHint`) | `delete_transaction`, `delete_credit` | Permanently remove a single record by id. |
 
 This design means a read-only, isolated client (e.g. a live artifact) can call
 `quarter_status({budget, quarter})` directly without any stateful setup, and a
@@ -65,7 +66,16 @@ cat rows.json | not-a-budget import --budget b.db --json -
 not-a-budget quarter-status --budget b.db --quarter 2026-Q2   # JSON on stdout
 not-a-budget year-summary --budget b.db
 not-a-budget add-credit --budget b.db --date 2026-05-16 --amount 7000 --note Pool
+not-a-budget update-transaction --budget b.db --id 42 --amount -12.50 --category Dining
+not-a-budget delete-transaction --budget b.db --id 42
+not-a-budget update-credit --budget b.db --id 3 --transferred
+not-a-budget delete-credit --budget b.db --id 3
 ```
+
+The CLI has parity with the MCP write/delete tools. `update-transaction` /
+`update-credit` are **partial**: only the flags you pass are changed (get ids
+from `list_transactions` / `list_credits` or the query output). `delete-*`
+remove a single record by id and print `{"ok":true,"deleted_id":N}`.
 
 Import input: CSV needs a header with `txn_date,description,amount` (plus
 optional `post_date,category,txn_type,memo`); amounts may include `$`, thousands

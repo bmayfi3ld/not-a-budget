@@ -48,8 +48,13 @@ the `budget` argument may be omitted.)
   read-only and open the file read-only, so they run in stateless, read-only
   sessions such as live artifacts.
 - **Write tools** (`import_file`, `import_transactions`, `add_transaction`,
-  `add_credit`, `set_config`, `mark_credit_transferred`) modify a budget and
-  **create the file if it does not yet exist**.
+  `add_credit`, `set_config`, `mark_credit_transferred`, `update_transaction`,
+  `update_credit`) modify a budget and **create the file if it does not yet
+  exist**. `update_transaction` / `update_credit` edit one existing record by id
+  (partial updates; get ids from `list_transactions` / `list_credits`).
+- **Delete tools** (`delete_transaction`, `delete_credit`) permanently remove a
+  single record by id — not bulk. To keep a transaction but exclude it from
+  spending, `update_transaction` it to `txn_type=payment`/`transfer` instead.
 
 ## Typical workflow
 

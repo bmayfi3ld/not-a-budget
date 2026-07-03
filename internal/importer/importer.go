@@ -32,6 +32,13 @@ type Report struct {
 	Warnings          []string `json:"warnings"`
 }
 
+// ClassifyType normalizes a free-form transaction type string, inferring from
+// the description and amount sign when empty. Exported for the update tools,
+// which re-normalize an edited type the same way an import would.
+func ClassifyType(raw, description string, amount float64) string {
+	return classifyType(raw, description, amount)
+}
+
 // classifyType normalizes a free-form type string. If empty, it infers from the
 // amount sign and description (credit-card payments / transfers are detected by
 // common keywords).

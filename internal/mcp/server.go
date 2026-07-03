@@ -73,12 +73,20 @@ func readOnly() *mcp.ToolAnnotations {
 	return &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: &no}
 }
 
-// write returns annotations for a non-read-only tool. None of this server's
-// write tools delete or overwrite data (imports de-duplicate, adds are
-// additive, updates are in place), so destructiveHint is always false.
+// write returns annotations for a non-read-only, non-destructive tool: imports
+// de-duplicate, adds are additive, and updates modify a single record in place
+// without dropping data, so destructiveHint is false.
 func write(idempotent bool) *mcp.ToolAnnotations {
 	no := false
 	return &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &no, IdempotentHint: idempotent, OpenWorldHint: &no}
+}
+
+// deleteWrite returns annotations for a destructive tool (deletes a record).
+// Deletes are idempotent — re-deleting a gone id is a no-op error — so clients
+// may group them accordingly, but destructiveHint flags them for confirmation.
+func deleteWrite() *mcp.ToolAnnotations {
+	no, yes := false, true
+	return &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &yes, IdempotentHint: true, OpenWorldHint: &no}
 }
 
 // Register attaches all tools to the server.
@@ -143,6 +151,41 @@ func (h *Handlers) Register(s *mcp.Server) {
 		Annotations: write(true),
 	}, h.MarkCreditTransferred)
 
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "update_transaction",
+		Description: "Edit a single existing transaction, found by its id (get ids from list_transactions). " +
+			"Only the fields you provide are changed; omitted fields keep their current values. " +
+			"Same rules as import: amount is SIGNED (negative = spend); category is normalized to the canonical set; " +
+			"txn_type is re-normalized to {expense,refund,payment,transfer,other}. " +
+			"NOTE: changing txn_type to payment or transfer does NOT delete the row — it just stops counting as spending; " +
+			"use delete_transaction to remove a row entirely. Editing date/amount/description recomputes the dedup key, " +
+			"so an edit that collides with another existing transaction is rejected. Returns the updated transaction." + budgetHint,
+		Annotations: write(true),
+	}, h.UpdateTransaction)
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "delete_transaction",
+		Description: "Permanently delete a single transaction by its id (get ids from list_transactions). " +
+			"This cannot be undone. To keep a record but exclude it from spending, use update_transaction to set " +
+			"txn_type=payment/transfer instead." + budgetHint,
+		Annotations: deleteWrite(),
+	}, h.DeleteTransaction)
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "update_credit",
+		Description: "Edit a single existing external-fund credit by its id (get ids from list_credits). " +
+			"Only the fields you provide are changed. amount is POSITIVE. Use mark_credit_transferred if you only need to " +
+			"flip the transferred flag. Returns the updated credit." + budgetHint,
+		Annotations: write(true),
+	}, h.UpdateCredit)
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "delete_credit",
+		Description: "Permanently delete a single external-fund credit by its id (get ids from list_credits). " +
+			"This cannot be undone." + budgetHint,
+		Annotations: deleteWrite(),
+	}, h.DeleteCredit)
+
 	// ---- READ tools (read-only; safe for stateless / sandboxed sessions) ----
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_budget_info",
@@ -197,7 +240,8 @@ func (h *Handlers) Register(s *mcp.Server) {
 		Description: "Return the absolute path to this server's binary and usage for its command-line mode. " +
 			"Use this when you want to write a SCRIPT (e.g. Python) that bulk-imports many transactions or queries a budget " +
 			"WITHOUT making one MCP tool call per operation. The same binary runs as a CLI when given a subcommand " +
-			"(import / quarter-status / year-summary / category-breakdown / add-credit); it applies the identical dedup, " +
+			"(import / quarter-status / year-summary / category-breakdown / add-credit / update-transaction / " +
+			"delete-transaction / update-credit / delete-credit); it applies the identical dedup, " +
 			"payment/transfer filtering, and aggregation logic as these tools. Prefer this for large CSV imports.",
 		Annotations: readOnly(),
 	}, h.GetCLIInfo)
@@ -470,6 +514,151 @@ func (h *Handlers) MarkCreditTransferred(ctx context.Context, _ *mcp.CallToolReq
 	return nil, OKOut{OK: true}, nil
 }
 
+type UpdateTxnIn struct {
+	Budget      string   `json:"budget,omitempty" jsonschema:"budget file path (optional)"`
+	ID          int64    `json:"id" jsonschema:"id of the transaction to update (from list_transactions)"`
+	TxnDate     *string  `json:"txn_date,omitempty" jsonschema:"ISO YYYY-MM-DD"`
+	PostDate    *string  `json:"post_date,omitempty" jsonschema:"ISO YYYY-MM-DD"`
+	Description *string  `json:"description,omitempty"`
+	Amount      *float64 `json:"amount,omitempty" jsonschema:"signed; negative = spend"`
+	Category    *string  `json:"category,omitempty" jsonschema:"normalized to the canonical set"`
+	TxnType     *string  `json:"txn_type,omitempty" jsonschema:"expense|refund|payment|transfer|other"`
+	Memo        *string  `json:"memo,omitempty"`
+}
+
+type TxnOut struct {
+	Transaction store.Transaction `json:"transaction"`
+}
+
+func (h *Handlers) UpdateTransaction(ctx context.Context, _ *mcp.CallToolRequest, in UpdateTxnIn) (*mcp.CallToolResult, TxnOut, error) {
+	s, release, err := h.resolve(in.Budget, true)
+	if err != nil {
+		return nil, TxnOut{}, err
+	}
+	defer release()
+	t, err := s.GetTransaction(in.ID)
+	if err != nil {
+		return nil, TxnOut{}, err
+	}
+	if in.TxnDate != nil {
+		if _, err := time.Parse("2006-01-02", *in.TxnDate); err != nil {
+			return nil, TxnOut{}, fmt.Errorf("bad txn_date %q (need YYYY-MM-DD)", *in.TxnDate)
+		}
+		t.TxnDate = *in.TxnDate
+	}
+	if in.PostDate != nil {
+		t.PostDate = *in.PostDate
+	}
+	if in.Description != nil {
+		if strings.TrimSpace(*in.Description) == "" {
+			return nil, TxnOut{}, fmt.Errorf("description cannot be empty")
+		}
+		t.Description = *in.Description
+	}
+	if in.Amount != nil {
+		t.Amount = *in.Amount
+	}
+	if in.Category != nil {
+		t.Category = importer.NormalizeCategory(*in.Category)
+		t.RawCategory = strings.TrimSpace(*in.Category)
+	}
+	if in.TxnType != nil {
+		t.TxnType = importer.ClassifyType(*in.TxnType, t.Description, t.Amount)
+	}
+	if in.Memo != nil {
+		t.Memo = *in.Memo
+	}
+	if err := s.UpdateTransaction(t); err != nil {
+		return nil, TxnOut{}, err
+	}
+	updated, err := s.GetTransaction(in.ID)
+	if err != nil {
+		return nil, TxnOut{}, err
+	}
+	return nil, TxnOut{Transaction: updated}, nil
+}
+
+type DeleteIn struct {
+	Budget string `json:"budget,omitempty" jsonschema:"budget file path (optional)"`
+	ID     int64  `json:"id" jsonschema:"id of the record to delete"`
+}
+
+func (h *Handlers) DeleteTransaction(ctx context.Context, _ *mcp.CallToolRequest, in DeleteIn) (*mcp.CallToolResult, OKOut, error) {
+	s, release, err := h.resolve(in.Budget, true)
+	if err != nil {
+		return nil, OKOut{}, err
+	}
+	defer release()
+	if err := s.DeleteTransaction(in.ID); err != nil {
+		return nil, OKOut{}, err
+	}
+	return nil, OKOut{OK: true}, nil
+}
+
+type UpdateCreditIn struct {
+	Budget      string   `json:"budget,omitempty" jsonschema:"budget file path (optional)"`
+	ID          int64    `json:"id" jsonschema:"id of the credit to update (from list_credits)"`
+	Date        *string  `json:"date,omitempty" jsonschema:"ISO YYYY-MM-DD"`
+	Amount      *float64 `json:"amount,omitempty" jsonschema:"positive; offsets net spend"`
+	Note        *string  `json:"note,omitempty"`
+	Note2       *string  `json:"note2,omitempty"`
+	Transferred *bool    `json:"transferred,omitempty" jsonschema:"whether the money has been transferred yet"`
+}
+
+type CreditOut struct {
+	Credit store.Credit `json:"credit"`
+}
+
+func (h *Handlers) UpdateCredit(ctx context.Context, _ *mcp.CallToolRequest, in UpdateCreditIn) (*mcp.CallToolResult, CreditOut, error) {
+	s, release, err := h.resolve(in.Budget, true)
+	if err != nil {
+		return nil, CreditOut{}, err
+	}
+	defer release()
+	c, err := s.GetCredit(in.ID)
+	if err != nil {
+		return nil, CreditOut{}, err
+	}
+	if in.Date != nil {
+		if _, err := time.Parse("2006-01-02", *in.Date); err != nil {
+			return nil, CreditOut{}, fmt.Errorf("bad date %q (need YYYY-MM-DD)", *in.Date)
+		}
+		c.Date = *in.Date
+	}
+	if in.Amount != nil {
+		c.Amount = *in.Amount
+	}
+	if in.Note != nil {
+		c.Note = *in.Note
+	}
+	if in.Note2 != nil {
+		c.Note2 = *in.Note2
+	}
+	if in.Transferred != nil {
+		c.Transferred = *in.Transferred
+	}
+	if err := s.UpdateCredit(c); err != nil {
+		return nil, CreditOut{}, err
+	}
+	updated, err := s.GetCredit(in.ID)
+	if err != nil {
+		return nil, CreditOut{}, err
+	}
+	return nil, CreditOut{Credit: updated}, nil
+}
+
+func (h *Handlers) DeleteCredit(ctx context.Context, _ *mcp.CallToolRequest, in DeleteIn) (*mcp.CallToolResult, OKOut, error) {
+	s, release, err := h.resolve(in.Budget, true)
+	if err != nil {
+		return nil, OKOut{}, err
+	}
+	defer release()
+	if err := s.DeleteCredit(in.ID); err != nil {
+		return nil, OKOut{}, err
+	}
+	return nil, OKOut{OK: true}, nil
+}
+
 // ---- READ tool I/O and handlers ----
 
 type BudgetIn struct {
@@ -678,6 +867,10 @@ func (h *Handlers) GetCLIInfo(ctx context.Context, _ *mcp.CallToolRequest, _ str
 			bin + ` quarter-status --budget /path/budget.db --quarter 2026-Q2`,
 			bin + ` year-summary --budget /path/budget.db`,
 			bin + ` category-breakdown --budget /path/budget.db --quarter 2026-Q2`,
+			bin + ` update-transaction --budget /path/budget.db --id 42 --amount -12.50 --category Dining`,
+			bin + ` delete-transaction --budget /path/budget.db --id 42`,
+			bin + ` update-credit --budget /path/budget.db --id 3 --transferred`,
+			bin + ` delete-credit --budget /path/budget.db --id 3`,
 		},
 		Notes: "Amount is signed (negative = money out). txn_type is one of expense|refund|payment|transfer|other; " +
 			"payments and transfers are filtered out. Rows are de-duplicated on sha1(txn_date|amount|normalized description), " +
